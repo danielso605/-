@@ -1,0 +1,9 @@
+{
+  "name": "견과 한 줌 - 견과류 인식 & 칼로리",
+  "short_name": "견과 한 줌",
+  "lang": "ko",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#fdf8f2",
+  "theme_color": "#8a5a2b"
+}

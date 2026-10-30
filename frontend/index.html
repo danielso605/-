@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#8a5a2b">
+  <title>견과 한 줌</title>
+  <link rel="manifest" href="/static/manifest.webmanifest">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body data-mode="senior">
+  <header class="top">
+    <h1>🥜 견과 한 줌</h1>
+    <button id="font-toggle" class="chip" aria-label="글자 크기 바꾸기">가+</button>
+  </header>
+
+  <main>
+    <section class="modes" role="tablist" aria-label="사용자 유형">
+      <button role="tab" data-mode="senior" aria-selected="true">👵 어르신</button>
+      <button role="tab" data-mode="athlete" aria-selected="false">🏃 운동</button>
+      <button role="tab" data-mode="general" aria-selected="false">🙂 일반</button>
+    </section>
+
+    <section class="capture">
+      <label class="big-btn primary">
+        📷 사진 찍기
+        <input id="camera-input" type="file" accept="image/*" capture="environment" hidden>
+      </label>
+      <label class="big-btn">
+        🖼️ 앨범에서 고르기
+        <input id="album-input" type="file" accept="image/*" hidden>
+      </label>
+      <p class="hint">견과류를 접시나 손바닥 위에 <b>겹치지 않게</b> 펼쳐 놓고 위에서 찍어 주세요.</p>
+    </section>
+
+    <section id="status" class="status" hidden></section>
+
+    <section id="result" hidden>
+      <div class="photo-wrap">
+        <canvas id="photo" aria-label="인식된 견과류 표시 사진"></canvas>
+      </div>
+
+      <div id="total" class="card total"></div>
+
+      <button id="speak" class="big-btn">🔊 결과 읽어주기</button>
+
+      <h2>견과류별 정보</h2>
+      <p class="hint">개수가 틀렸다면 <b>－ / ＋</b> 버튼으로 고쳐 주세요. 칼로리가 바로 다시 계산돼요.</p>
+      <div id="items"></div>
+
+      <div class="card add-row">
+        <label for="add-select">빠진 견과류 추가</label>
+        <div class="row">
+          <select id="add-select"></select>
+          <button id="add-btn" class="chip">추가</button>
+        </div>
+      </div>
+    </section>
+
+    <p class="disclaimer">
+      칼로리와 영양 정보는 평균값으로 추정한 참고용입니다. 질환이 있거나 식이 제한이 있다면 의사·영양사와 상담하세요.
+    </p>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
