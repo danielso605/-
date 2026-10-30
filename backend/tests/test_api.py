@@ -29,7 +29,7 @@ def test_analyze_groups_detections_by_type():
     assert res.status_code == 200
     body = res.json()
     counts = {item["nut_id"]: item["count"] for item in body["items"]}
-    assert counts == {"almond": 3, "walnut": 2, "cashew": 1, "pistachio": 1}
+    assert counts == {"almond": 3, "walnut": 2, "cashew": 1, "pistachio": 1, "raisin": 1}
     assert body["total"]["kcal"] == round(sum(i["nutrition"]["kcal"] for i in body["items"]), 1)
 
 
@@ -42,6 +42,10 @@ def test_clean_clamps_and_orders_box():
     d = _clean({"nut_id": "almond", "box": [1200, 50, -10, 30], "confidence": 1.4})
     assert d["box"] == [0, 30, 1000, 50]
     assert d["confidence"] == 1.0
+
+
+def test_supported_classes():
+    assert list(load_nuts()) == ["almond", "peanut", "pistachio", "cashew", "hazelnut", "walnut", "raisin"]
 
 
 def test_schema_lists_all_nuts():

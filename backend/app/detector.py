@@ -55,19 +55,19 @@ def _detection_schema() -> dict:
 
 def _system_prompt() -> str:
     catalog = "\n".join(f"- {nut['id']}: {nut['name_ko']} ({nut['name_en']})" for nut in load_nuts().values())
-    return f"""You are a food-vision system that finds every individual nut in a photo.
+    return f"""You are a food-vision system that finds every individual nut and raisin in a photo.
 
-Report one detection per visible nut kernel or shelled nut, even when many nuts of several kinds are mixed together or touching. Do not merge neighbouring nuts into one box, and do not skip partially hidden nuts at the edges of a pile.
+Report one detection per visible nut (kernel or in-shell) or raisin, even when many items of several kinds are mixed together or touching. Do not merge neighbouring items into one box, and do not skip partially hidden items at the edges of a pile.
 
 For each nut give:
-- nut_id: one of the ids below. Use "{UNKNOWN}" for something that is clearly a nut or seed but not in the list. Ignore objects that are not nuts (plates, hands, packaging, raisins, dried fruit).
+- nut_id: one of the ids below. Use "{UNKNOWN}" for a nut, seed or dried fruit that is not in the list. Ignore everything else (plates, hands, packaging).
 - box: [x_min, y_min, x_max, y_max] tightly around that nut, in coordinates normalised to 0-1000 where (0, 0) is the top-left corner of the image.
 - confidence: 0.0-1.0, how sure you are about the nut type.
 
-Known nut ids:
+Known ids:
 {catalog}
 
-Return an empty detections list if the photo contains no nuts."""
+Return an empty detections list if the photo contains none of them."""
 
 
 class ClaudeDetector:
@@ -80,7 +80,7 @@ class ClaudeDetector:
         self.client = anthropic.Anthropic()
         self.model = model or os.getenv("NUT_CLAUDE_MODEL", "claude-opus-5-5")
 
-    def detect(self, image: bytes, media_type: str) -> list[dict]:
+    def detect(self, image: bytes, media_type: str, instruction: str = "Detect every nut and raisin in this photo.") -> list[dict]:
         anthropic = self._anthropic
         try:
             response = self.client.beta.messages.create(
@@ -106,7 +106,7 @@ class ClaudeDetector:
                                     "data": base64.standard_b64encode(image).decode("utf-8"),
                                 },
                             },
-                            {"type": "text", "text": "Detect every nut in this photo."},
+                            {"type": "text", "text": instruction},
                         ],
                     }
                 ],
@@ -176,6 +176,7 @@ class DemoDetector:
             {"nut_id": "walnut", "box": [420, 400, 680, 660], "confidence": 0.88},
             {"nut_id": "cashew", "box": [640, 140, 800, 300], "confidence": 0.86},
             {"nut_id": "pistachio", "box": [720, 480, 840, 600], "confidence": 0.81},
+            {"nut_id": "raisin", "box": [860, 300, 940, 380], "confidence": 0.84},
         ]
 
 

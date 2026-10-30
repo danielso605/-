@@ -3,3 +3,9 @@ __pycache__/
 .pytest_cache/
 .venv/
 *.pt
+training/raw/
+training/autolabels/
+training/datasets/
+training/runs/
+training/sources.yaml
+backend/models/
