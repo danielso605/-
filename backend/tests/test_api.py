@@ -1,6 +1,9 @@
+import json
 import os
+import tempfile
 
 os.environ["NUT_DETECTOR"] = "demo"
+os.environ["NUT_SAMPLES_DIR"] = tempfile.mkdtemp()
 
 from fastapi.testclient import TestClient  # noqa: E402
 
@@ -56,3 +59,45 @@ def test_schema_lists_all_nuts():
 def test_frontend_served():
     assert client.get("/").status_code == 200
     assert client.get("/static/app.js").status_code == 200
+
+
+def _save(split="test", consent=True, gt=None):
+    pred = client.post("/api/analyze", files={"image": ("a.jpg", b"img", "image/jpeg")}).json()["detections"]
+    gt = gt if gt is not None else [{"nut_id": d["nut_id"], "box": d["box"]} for d in pred]
+    payload = {"split": split, "consent": consent, "detector": "demo", "gt": gt, "pred": pred}
+    return client.post("/api/samples", files={"image": ("a.jpg", b"img", "image/jpeg")},
+                       data={"payload": json.dumps(payload)})
+
+
+def test_sample_requires_consent_and_known_class():
+    assert _save(consent=False).status_code == 400
+    assert _save(gt=[{"nut_id": "unknown", "box": [0, 0, 10, 10]}]).status_code == 400
+    assert _save(split="train").status_code == 400
+
+
+def test_saved_samples_feed_report():
+    before = client.get("/api/samples").json()["test"]
+    assert _save().status_code == 200
+    # 두 번째 사진: 아몬드 하나를 놓쳤다고 정답에 추가
+    gt = [{"nut_id": "almond", "box": [10, 800, 100, 900]}]
+    assert _save(gt=gt).status_code == 200
+    assert client.get("/api/samples").json()["test"] == before + 2
+
+    report = client.get("/api/report").json()
+    live = {r["detector"]: r["metrics"] for r in report["live"]}["demo"]
+    assert live["n_images"] == before + 2
+    assert 0 < live["overall"]["count_exact_rate"] < 1
+    assert report["names_ko"]["raisin"] == "건포도"
+
+
+def test_feedback_saved_as_yolo_dataset():
+    from app import samples
+
+    r = _save(split="feedback")
+    sid = r.json()["id"]
+    base = samples.SAMPLES_DIR / "feedback"
+    assert (base / "images" / f"{sid}.jpg").exists()
+    first = (base / "labels" / f"{sid}.txt").read_text().splitlines()[0].split()
+    assert first[0] == "0" and len(first) == 5  # almond = 0
+    assert "raisin" in (base / "data.yaml").read_text()
+    assert client.delete(f"/api/samples/feedback/{sid}").status_code == 200

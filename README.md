@@ -23,13 +23,21 @@
 
 ```
 backend/
-  app/main.py          FastAPI 서버 (/api/analyze, /api/nuts), 프론트엔드 정적 파일 제공
-  app/detector.py      인식기: Claude 비전(기본) / YOLO(직접 학습 모델) / 데모
+  app/main.py          FastAPI 서버 (인식, 샘플 저장, 정확도 리포트, 휴대폰용 모델 제공)
+  app/detector.py      인식기: Claude 비전 / YOLO / 하이브리드(YOLO→애매하면 Claude) / 데모
+  app/metrics.py       정확도 계산 (정밀도·재현율·mAP50·개수 일치·칼로리 오차·혼동 행렬)
+  app/samples.py       인식 테스트 화면에서 저장한 사진·정답 (test / feedback)
   app/nutrition.py     영양 DB 로딩, 칼로리 계산
-  app/data/nuts.json   견과류 영양·효능·주의사항 데이터
-  tests/               API 테스트
-frontend/              모바일 웹앱(PWA) — 카메라 촬영, 박스 표시, 결과 카드
-training/              YOLO 학습 파이프라인 — 다운로드, 자동 라벨링, 분할, 증강, 학습
+  app/data/nuts.json   견과류 영양·효능·주의사항 데이터 (배열 순서 = YOLO 클래스 번호)
+  models/              (학습 후) nuts.pt · nuts.json(기준값) · nuts.onnx(휴대폰용) · registry.json
+  data/                (실행 중 생성) samples/, reports/
+frontend/
+  index.html, app.js   메인 화면 — 촬영, 박스 표시, 칼로리·효능 카드, 휴대폰 내 인식 선택
+  label.html, label.js 인식 테스트 · 정답 만들기 — 박스 선택/이동/크기/추가/삭제, 종류 변경, 저장
+  report.html, report.js 정확도 리포트 그래프
+  ondevice.js          휴대폰 안에서 ONNX 모델 실행 (onnxruntime-web)
+  sw.js                오프라인용 서비스 워커
+training/              YOLO 학습 파이프라인 — training/README.md 참고
 ```
 
 ## 실행
@@ -41,25 +49,49 @@ export ANTHROPIC_API_KEY=...        # 없으면 데모 모드(예시 결과)로 
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-휴대폰 브라우저에서 `http://<서버주소>:8000` 접속 → 📷 사진 찍기. (휴대폰 카메라 사용에는 HTTPS 배포를 권장합니다.)
+휴대폰 브라우저에서 `http://<서버주소>:8000` 접속 → 📷 사진 찍기. (휴대폰 카메라·오프라인 기능에는 HTTPS 배포가 필요합니다.)
 홈 화면에 추가하면 앱처럼 사용할 수 있습니다.
 
-테스트: `cd backend && pytest`
+| 주소 | 화면 |
+| --- | --- |
+| `/` | 메인 앱 |
+| `/label` | **인식 테스트** — 직접 찍은 사진의 인식 결과를 확인하고, 틀린 박스를 고쳐 정답으로 저장 (테스트용 / 재학습용) |
+| `/report` | **정확도 리포트** — 저장한 테스트 사진 기준 개수 일치율·칼로리 오차·mAP50, 종류별 정밀도/재현율, 개수 오차, 혼동 행렬, 모델 버전별 변화 |
+
+테스트: `cd backend && pytest` · `cd training && pytest` · `node --test frontend/tests/*.test.js`
+
+### 정확도 확인하는 법
+
+1. `/label` 에서 견과류 사진을 찍는다 (여러 종류 섞어서, 배경·조명 다양하게).
+2. 틀린 박스를 고친다: 박스를 눌러 종류 바꾸기 · 끌어서 이동 · 모서리로 크기 조절 · ✏️로 빠진 것 추가 · 🗑로 삭제.
+3. '정확도 측정용'으로 저장 (동의 체크 필요).
+4. `/report` 에서 그래프 확인. 인식기(claude / yolo / hybrid)별로 따로 집계됩니다. 100장 이상 모이면 믿을 만한 수치가 됩니다.
 
 ### 인식기 선택 (`NUT_DETECTOR`)
 
+지정하지 않으면 자동: 학습된 `models/nuts.pt` 와 API 키가 둘 다 있으면 `hybrid`, 모델만 있으면 `yolo`, 키만 있으면 `claude`, 둘 다 없으면 `demo`.
+
 | 값 | 설명 |
 | --- | --- |
-| `claude` | Claude 비전 모델이 견과류마다 종류·박스를 JSON 구조화 출력으로 반환 (키가 있으면 기본값). 모델은 `NUT_CLAUDE_MODEL` 로 변경 가능 |
-| `yolo` | 직접 학습한 YOLO 가중치 사용 (`NUT_YOLO_WEIGHTS=models/nuts.pt`, `pip install ultralytics pillow`). 학습 방법은 [`training/README.md`](training/README.md) |
+| `claude` | Claude 비전 모델이 견과류마다 종류·박스를 JSON 구조화 출력으로 반환. 모델은 `NUT_CLAUDE_MODEL` 로 변경 가능 |
+| `yolo` | 직접 학습한 YOLO (`NUT_YOLO_WEIGHTS`, 기본 `models/nuts.pt`, `pip install ultralytics pillow`). 기준값은 가중치 옆 `.json` |
+| `hybrid` | YOLO 결과가 없거나 '확인 필요' 박스가 30% 넘으면(`NUT_HYBRID_MAX_REVIEW`) Claude 로 다시 인식 |
 | `demo` | 고정된 예시 결과 (UI 확인용) |
+
+'확인 필요'(신뢰도가 낮은) 박스는 화면에 **점선**으로 표시되고 개수 확인을 안내합니다.
+
+### 휴대폰 안에서 인식 (오프라인)
+
+`models/nuts.onnx` 가 있으면 메인 화면에 **📱 휴대폰에서 바로 인식** 선택지가 나타납니다. 켜면 사진이 서버로 가지 않고
+휴대폰 브라우저에서 모델이 실행됩니다 (onnxruntime-web, 처음 한 번은 엔진·모델 다운로드). 서비스 워커가 화면·모델·엔진을
+저장해 두어 이후에는 인터넷 없이도 열립니다.
 
 ## 다음 단계 제안
 
-1. **데이터 수집 → 전용 모델 학습**: Claude 인식 결과를 사용자가 수정한 데이터로 라벨을 모아 YOLO를 학습하면, 비용 없이 빠르게(오프라인·온디바이스까지) 인식할 수 있습니다.
-2. **무게 정확도 향상**: 동전·카드 같은 기준 물체로 크기를 보정하거나, 박스 면적으로 개별 무게를 추정.
-3. **가공 여부 인식**: 소금/설탕 코팅, 껍질 유무에 따라 나트륨·칼로리 보정.
-4. **기록·가족 공유**: 하루 섭취 기록, 보호자에게 요약 알림.
-5. **네이티브 앱**: 현재 PWA를 Flutter/React Native로 감싸 앱스토어 배포.
+1. **무게 정확도 향상**: 동전·카드 같은 기준 물체로 크기를 보정하거나, 박스 면적으로 개별 무게를 추정.
+2. **가공 여부 인식**: 소금/설탕 코팅, 껍질 유무에 따라 나트륨·칼로리 보정.
+3. **기록·가족 공유**: 하루 섭취 기록, 보호자에게 요약 알림.
+4. **네이티브 앱**: 현재 PWA를 Flutter/React Native로 감싸 앱스토어 배포.
+5. **로그인·권한**: 지금은 `/label`·`/report`·샘플 저장 API 에 인증이 없습니다. 외부 공개 전에 관리자 인증을 붙이세요.
 
 > 영양 정보는 USDA 등 공개 자료 기반의 평균 추정치로 참고용입니다. 질환이 있으면 전문가와 상담하세요.

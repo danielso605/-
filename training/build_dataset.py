@@ -5,6 +5,9 @@
 - 같은 사진(바이트 동일)은 한 번만 넣는다.
 - 분할은 파일 해시로 정해서 다시 돌려도 같은 사진은 같은 분할에 들어간다.
 - 데이터 증강은 반드시 이 다음 단계에서 train 에만 한다 (val/test 오염 방지).
+- 라벨 형식: yolo / classified(+autolabel) / coco(JSON) / voc(XML)
+- rejects.txt (review.py 로 검수하며 적은 사진 id) 에 있는 사진은 뺀다.
+- 앱의 정확도 측정용 사진(backend/data/samples/test)은 학습에 절대 들어가지 않게 막는다.
 
     python build_dataset.py --sources sources.yaml --min-images 2000
 """
@@ -13,16 +16,19 @@ import argparse
 import hashlib
 import json
 import shutil
+import xml.etree.ElementTree as ET
 from collections import Counter
 from pathlib import Path
 
 import yaml
 
 from autolabel import LABEL_DIR, find_folder, source_dir
-from common import ROOT, class_names, list_images, read_labels, write_labels
+from common import IMAGE_EXTS, ROOT, class_names, list_images, read_labels, write_labels
 
 OUT = ROOT / "datasets" / "nuts"
 SPLITS = ("train", "val", "test")
+REJECTS = ROOT / "rejects.txt"
+APP_TEST_DIR = ROOT.parent / "backend" / "data" / "samples" / "test"
 
 
 def split_for(digest: str) -> str:
@@ -59,6 +65,84 @@ def collect_yolo(src: dict, names: list[str]):
         yield image, [(mapping[c], *box) for c, *box in rows]
 
 
+def _box_row(cls: int, x1: float, y1: float, x2: float, y2: float, w: float, h: float):
+    x1, x2 = max(0.0, x1), min(w, x2)
+    y1, y2 = max(0.0, y1), min(h, y2)
+    if x2 <= x1 or y2 <= y1:
+        return None
+    return (cls, (x1 + x2) / 2 / w, (y1 + y2) / 2 / h, (x2 - x1) / w, (y2 - y1) / h)
+
+
+def collect_coco(src: dict, names: list[str]):
+    """COCO JSON: images[{id,file_name,width,height}], annotations[{image_id,category_id,bbox:[x,y,w,h]}]."""
+    base = source_dir(src)
+    for ann_file in sorted(base.rglob(src.get("annotations", "*.json"))):
+        coco = json.loads(ann_file.read_text(encoding="utf-8"))
+        if "images" not in coco or "annotations" not in coco:
+            continue
+        cats = {c["id"]: c["name"] for c in coco["categories"]}
+        by_image = {}
+        for a in coco["annotations"]:
+            by_image.setdefault(a["image_id"], []).append(a)
+        for img in coco["images"]:
+            path = ann_file.parent / img["file_name"]
+            if not path.exists():
+                matches = list(base.rglob(Path(img["file_name"]).name))
+                if not matches:
+                    continue
+                path = matches[0]
+            rows, ok = [], True
+            for a in by_image.get(img["id"], []):
+                target = src["class_map"].get(cats[a["category_id"]])
+                if target is None:
+                    ok = False
+                    break
+                x, y, w, h = a["bbox"]
+                row = _box_row(names.index(target), x, y, x + w, y + h, img["width"], img["height"])
+                if row:
+                    rows.append(row)
+            yield path, rows if ok and rows else None
+
+
+def collect_voc(src: dict, names: list[str]):
+    """Pascal VOC XML: 사진마다 <filename>, <size>, <object><name><bndbox> 를 가진 xml."""
+    base = source_dir(src)
+    for xml_file in sorted(base.rglob("*.xml")):
+        root = ET.parse(xml_file).getroot()
+        if root.tag != "annotation":
+            continue
+        filename = root.findtext("filename") or ""
+        path = xml_file.with_name(filename)
+        if not path.exists():
+            candidates = [p for p in xml_file.parent.glob(f"{xml_file.stem}.*") if p.suffix.lower() in IMAGE_EXTS]
+            if not candidates and filename:
+                candidates = list(base.rglob(filename))
+            if not candidates:
+                continue
+            path = candidates[0]
+        w = float(root.findtext("size/width") or 0)
+        h = float(root.findtext("size/height") or 0)
+        if not w or not h:
+            from PIL import Image
+            with Image.open(path) as im:
+                w, h = im.size
+        rows, ok = [], True
+        for obj in root.iter("object"):
+            target = src["class_map"].get(obj.findtext("name", "").strip())
+            if target is None:
+                ok = False
+                break
+            bb = obj.find("bndbox")
+            coords = [float(bb.findtext(k)) for k in ("xmin", "ymin", "xmax", "ymax")]
+            row = _box_row(names.index(target), *coords, w, h)
+            if row:
+                rows.append(row)
+        yield path, rows if ok and rows else None
+
+
+COLLECTORS = {"yolo": collect_yolo, "coco": collect_coco, "voc": collect_voc}
+
+
 def collect_classified(src: dict):
     base = source_dir(src)
     for folder_name in src["folder_map"]:
@@ -81,13 +165,22 @@ def main() -> None:
     if OUT.exists():
         shutil.rmtree(OUT)
 
-    seen: set[str] = set()
+    for src in sources:
+        if src["type"] == "local" and APP_TEST_DIR.resolve() in [*(ROOT / src["path"]).resolve().parents, (ROOT / src["path"]).resolve()]:
+            raise SystemExit(f"[{src['name']}] 앱 정확도 측정용 사진(samples/test)은 학습에 쓸 수 없습니다. samples/feedback 을 쓰세요.")
+
+    rejects = {line.split()[0] for line in REJECTS.read_text().splitlines() if line.strip() and not line.startswith("#")} \
+        if REJECTS.exists() else set()
+    # 앱 테스트 사진과 같은 사진이 학습 데이터에 섞여 들어가지 않게 해시로 막는다
+    seen: set[str] = {hashlib.md5(p.read_bytes()).hexdigest() for p in list_images(APP_TEST_DIR)} \
+        if APP_TEST_DIR.exists() else set()
     skipped = Counter()
     images_per_class = {s: Counter() for s in SPLITS}
     boxes_per_class = {s: Counter() for s in SPLITS}
 
     for src in sources:
-        items = collect_yolo(src, names) if src["format"] == "yolo" else collect_classified(src)
+        fmt = src["format"]
+        items = collect_classified(src) if fmt == "classified" else COLLECTORS[fmt](src, names)
         for image, rows in items:
             if rows is None:
                 skipped[src["name"]] += 1
@@ -95,6 +188,9 @@ def main() -> None:
             digest = hashlib.md5(image.read_bytes()).hexdigest()
             if digest in seen:
                 skipped["중복"] += 1
+                continue
+            if digest[:12] in rejects:
+                skipped["검수 제외"] += 1
                 continue
             seen.add(digest)
 

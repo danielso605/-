@@ -1,22 +1,26 @@
 """견과류 객체 인식기.
 
 - ClaudeDetector: Claude 비전 모델로 사진 속 견과류를 하나하나 찾아 종류와 위치(박스)를 반환한다.
-- YoloDetector: 직접 학습한 YOLO 가중치가 있을 때 사용하는 온디바이스/서버 추론기 (선택).
+- YoloDetector: 직접 학습한 YOLO 가중치 (training/ 파이프라인으로 학습, 기준값은 가중치 옆 .json).
+- HybridDetector: YOLO 우선, 애매하면 Claude 로 다시 확인.
 - DemoDetector: API 키가 없을 때 화면 흐름을 확인하기 위한 가짜 결과.
 
 모든 인식기는 같은 형식의 결과를 돌려준다:
-    [{"nut_id": "almond", "box": [x1, y1, x2, y2], "confidence": 0.93}, ...]
+    [{"nut_id": "almond", "box": [x1, y1, x2, y2], "confidence": 0.93, "needs_review": False}, ...]
 box 좌표는 이미지 크기와 무관하게 0~1000 으로 정규화한 값이다.
 """
 
 import base64
 import json
 import os
+from pathlib import Path
 from typing import Protocol
 
+from .metrics import postprocess
 from .nutrition import load_nuts
 
 UNKNOWN = "unknown"
+DEFAULT_WEIGHTS = Path(__file__).resolve().parents[1] / "models" / "nuts.pt"
 
 
 class DetectionError(Exception):
@@ -131,35 +135,76 @@ class ClaudeDetector:
         return [_clean(d) for d in detections if len(d.get("box", [])) == 4]
 
 
+DEFAULT_THRESHOLDS = {"conf": 0.25, "iou": 0.5, "review_conf": 0.5}
+
+
+def load_thresholds(weights: str | Path) -> dict:
+    """가중치 옆의 같은 이름 .json (training/tune.py 가 만든 값). 없으면 기본값."""
+    path = Path(weights).with_suffix(".json")
+    return {**DEFAULT_THRESHOLDS, **json.loads(path.read_text())} if path.exists() else dict(DEFAULT_THRESHOLDS)
+
+
 class YoloDetector:
-    """직접 학습한 YOLO 모델(ultralytics) 사용. 클래스 이름은 nuts.json 의 id 와 같아야 한다."""
+    """직접 학습한 YOLO 모델(ultralytics). 클래스 이름은 nuts.json 의 id 와 같아야 한다.
+
+    YOLO 자체 NMS 는 거의 끄고(raw) 앱 공통 후처리(metrics.postprocess)로 걸러서,
+    tune.py 가 고른 기준값과 실제 앱 동작이 정확히 같게 한다.
+    """
 
     name = "yolo"
 
-    def __init__(self, weights: str):
+    def __init__(self, weights: str | Path, thresholds: dict | None = None):
         from ultralytics import YOLO
 
-        self.model = YOLO(weights)
+        self.model = YOLO(str(weights))
+        self.thresholds = thresholds or load_thresholds(weights)
 
-    def detect(self, image: bytes, media_type: str) -> list[dict]:
+    def raw(self, image: bytes) -> list[dict]:
         import io
 
         from PIL import Image
 
         img = Image.open(io.BytesIO(image)).convert("RGB")
-        result = self.model.predict(img, verbose=False)[0]
+        result = self.model.predict(img, conf=0.01, iou=0.95, max_det=600, verbose=False)[0]
         known = load_nuts()
-        detections = []
-        for box, cls, conf in zip(result.boxes.xyxyn.tolist(), result.boxes.cls.tolist(), result.boxes.conf.tolist()):
-            label = result.names[int(cls)]
-            detections.append(
-                {
-                    "nut_id": label if label in known else UNKNOWN,
-                    "box": [round(v * 1000) for v in box],
-                    "confidence": float(conf),
-                }
-            )
-        return detections
+        return [
+            {
+                "nut_id": result.names[int(cls)] if result.names[int(cls)] in known else UNKNOWN,
+                "box": [round(v * 1000) for v in box],
+                "confidence": round(float(conf), 3),
+            }
+            for box, cls, conf in zip(result.boxes.xyxyn.tolist(), result.boxes.cls.tolist(), result.boxes.conf.tolist())
+        ]
+
+    def detect(self, image: bytes, media_type: str) -> list[dict]:
+        t = self.thresholds
+        kept = postprocess(self.raw(image), t["conf"], t["iou"])
+        return [{**d, "needs_review": d["confidence"] < t["review_conf"]} for d in kept]
+
+
+class HybridDetector:
+    """평소엔 빠르고 무료인 YOLO, 애매한 사진만 Claude 에 다시 묻는다.
+
+    YOLO 결과가 비었거나 '확인 필요' 박스 비율이 max_review_share 를 넘으면 Claude 결과를 쓴다.
+    Claude 가 실패하면 YOLO 결과를 그대로 돌려준다 (점선 박스로 사용자 확인 유도).
+    """
+
+    name = "hybrid"
+
+    def __init__(self, primary: "Detector", fallback: "Detector", max_review_share: float = 0.3):
+        self.primary = primary
+        self.fallback = fallback
+        self.max_review_share = max_review_share
+
+    def detect(self, image: bytes, media_type: str) -> list[dict]:
+        dets = self.primary.detect(image, media_type)
+        review = sum(1 for d in dets if d.get("needs_review"))
+        if dets and review / len(dets) <= self.max_review_share:
+            return [{**d, "source": self.primary.name} for d in dets]
+        try:
+            return [{**d, "source": self.fallback.name} for d in self.fallback.detect(image, media_type)]
+        except DetectionError:
+            return [{**d, "source": self.primary.name} for d in dets]
 
 
 class DemoDetector:
@@ -190,12 +235,18 @@ def _clean(detection: dict) -> dict:
 
 
 def create_detector() -> Detector:
-    """환경변수로 인식기를 고른다. NUT_DETECTOR=claude|yolo|demo (기본: 키가 있으면 claude)."""
+    """환경변수로 인식기를 고른다. NUT_DETECTOR=claude|yolo|hybrid|demo
+    (기본: models/nuts.pt 가 있고 키도 있으면 hybrid, 모델만 있으면 yolo, 키만 있으면 claude, 둘 다 없으면 demo)."""
     choice = os.getenv("NUT_DETECTOR")
+    weights = Path(os.getenv("NUT_YOLO_WEIGHTS", DEFAULT_WEIGHTS))
+    has_key = bool(os.getenv("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_AUTH_TOKEN"))
+    if choice is None:
+        choice = ("hybrid" if has_key else "yolo") if weights.exists() else ("claude" if has_key else "demo")
     if choice == "yolo":
-        return YoloDetector(os.environ["NUT_YOLO_WEIGHTS"])
-    if choice == "demo":
-        return DemoDetector()
-    if choice == "claude" or os.getenv("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_AUTH_TOKEN"):
+        return YoloDetector(weights)
+    if choice == "hybrid":
+        return HybridDetector(YoloDetector(weights), ClaudeDetector(),
+                              float(os.getenv("NUT_HYBRID_MAX_REVIEW", "0.3")))
+    if choice == "claude":
         return ClaudeDetector()
     return DemoDetector()

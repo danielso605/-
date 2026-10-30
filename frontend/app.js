@@ -1,8 +1,5 @@
 "use strict";
 
-const MAX_SIDE = 1568; // 업로드 전 축소: 인식 품질은 유지하면서 전송량·비용을 줄인다
-const COLORS = ["#e53935", "#1e88e5", "#43a047", "#fb8c00", "#8e24aa", "#00897b", "#f4511e", "#3949ab", "#c0ca33", "#6d4c41", "#d81b60", "#546e7a"];
-
 const state = {
   mode: localGet("mode") || "senior",
   nuts: {},           // id -> nut 정보 (/api/nuts)
@@ -42,14 +39,43 @@ async function init() {
   });
 
   try {
-    const res = await fetch("/api/nuts");
-    const data = await res.json();
-    state.dailyG = data.daily_recommended_g;
-    data.nuts.forEach((nut, i) => { state.nuts[nut.id] = { ...nut, color: COLORS[i % COLORS.length] }; });
-    $("#add-select").innerHTML = data.nuts.map((n) => `<option value="${n.id}">${n.name_ko}</option>`).join("");
+    const { nuts, dailyG, list } = await loadNuts();
+    state.nuts = nuts;
+    state.dailyG = dailyG;
+    $("#add-select").innerHTML = list.map((n) => `<option value="${n.id}">${n.name_ko}</option>`).join("");
   } catch {
     showStatus("서버에 연결할 수 없어요. 인터넷 연결을 확인해 주세요.", true);
   }
+
+  // 휴대폰용 모델이 배포돼 있을 때만 '휴대폰에서 바로 인식' 선택지를 보여 준다
+  if (await OnDevice.available()) {
+    $("#ondevice-row").hidden = false;
+    $("#ondevice").checked = localGet("ondevice") === "1";
+    $("#ondevice").addEventListener("change", (e) => localSet("ondevice", e.target.checked ? "1" : "0"));
+  }
+}
+
+/** 휴대폰 안에서 인식하고 서버 /api/analyze 와 같은 모양의 결과를 만든다. */
+async function analyzeOnDevice(image) {
+  const detections = await OnDevice.detect(image);
+  const counts = new Map();
+  detections.forEach((d) => { if (state.nuts[d.nut_id]) counts.set(d.nut_id, (counts.get(d.nut_id) || 0) + 1); });
+  return {
+    detector: "ondevice",
+    detections,
+    items: [...counts].map(([nut_id, count]) => ({ nut_id, count })),
+    unknown_count: detections.filter((d) => !state.nuts[d.nut_id]).length,
+    needs_review: detections.filter((d) => d.needs_review).length,
+  };
+}
+
+async function analyzeOnServer(blob) {
+  const form = new FormData();
+  form.append("image", blob, "photo.jpg");
+  const res = await fetch("/api/analyze", { method: "POST", body: form });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.detail || "분석에 실패했어요.");
+  return data;
 }
 
 function setMode(mode) {
@@ -77,11 +103,7 @@ async function onFile(event) {
   try {
     const { blob, image } = await resizeImage(file);
     state.image = image;
-    const form = new FormData();
-    form.append("image", blob, "photo.jpg");
-    const res = await fetch("/api/analyze", { method: "POST", body: form });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.detail || "분석에 실패했어요.");
+    const data = $("#ondevice").checked ? await analyzeOnDevice(image) : await analyzeOnServer(blob);
 
     state.detections = data.detections;
     state.counts = new Map(data.items.map((item) => [item.nut_id, item.count]));
@@ -93,6 +115,7 @@ async function onFile(event) {
     let msg = "";
     if (data.detector === "demo") msg = "※ 데모 모드: 실제 인식이 아닌 예시 결과입니다.";
     if (data.unknown_count) msg += ` 알 수 없는 견과류 ${data.unknown_count}개는 계산에서 뺐어요.`;
+    if (data.needs_review) msg += ` 점선 박스 ${data.needs_review}개는 확실하지 않아요. 개수를 한 번 확인해 주세요.`;
     showStatus(msg.trim());
     $("#result").hidden = false;
     render();
@@ -100,26 +123,6 @@ async function onFile(event) {
   } catch (err) {
     showStatus(err.message || "분석에 실패했어요. 다시 시도해 주세요.", true);
   }
-}
-
-function resizeImage(file) {
-  return new Promise((resolve, reject) => {
-    const url = URL.createObjectURL(file);
-    const img = new Image();
-    img.onload = () => {
-      const scale = Math.min(1, MAX_SIDE / Math.max(img.width, img.height));
-      const canvas = document.createElement("canvas");
-      canvas.width = Math.round(img.width * scale);
-      canvas.height = Math.round(img.height * scale);
-      canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
-      canvas.toBlob((blob) => {
-        URL.revokeObjectURL(url);
-        blob ? resolve({ blob, image: canvas }) : reject(new Error("사진을 처리하지 못했어요."));
-      }, "image/jpeg", 0.85);
-    };
-    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("사진을 열 수 없어요.")); };
-    img.src = url;
-  });
 }
 
 function drawPhoto() {
@@ -142,7 +145,9 @@ function drawPhoto() {
     const [x1, y1, x2, y2] = d.box.map((v, i) => (v / 1000) * (i % 2 === 0 ? src.width : src.height));
     ctx.lineWidth = line;
     ctx.strokeStyle = color;
+    ctx.setLineDash(d.needs_review ? [line * 3, line * 2] : []);
     ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+    ctx.setLineDash([]);
 
     const label = nut ? nut.name_ko : "?";
     const w = ctx.measureText(label).width + 10;

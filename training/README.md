@@ -9,32 +9,65 @@
 ```bash
 cd training
 pip install -r requirements.txt
-cp sources.example.yaml sources.yaml      # 데이터 출처·링크 채우기
+cp sources.example.yaml sources.yaml        # 데이터 출처·링크 채우기 (format: yolo / coco / voc / classified)
 
-python download.py                         # 1. 데이터 내려받기 → raw/
-python autolabel.py --dry-run              # 2. 박스 없는 사진 수 확인 (= Claude 호출 수)
-python autolabel.py --workers 4            #    Claude 로 박스 라벨 생성 → autolabels/
-python build_dataset.py --min-images 2000  # 3. 7종만 남겨 합치기, train/val/test 8:1:1 분할
-python augment.py --min 5000 --max 10000   # 4. train 만 증강 → 클래스당 5,000~10,000장
-python train.py --model yolo11s.pt --epochs 100   # 5. 학습(GPU) → test 평가 → backend/models/nuts.pt
+python download.py                           # 1. 데이터 내려받기 → raw/
+python autolabel.py --dry-run                # 2. 박스 없는 사진 수 확인 (= Claude 호출 수)
+python autolabel.py --workers 4              #    Claude 로 박스 라벨 생성 → autolabels/
+python build_dataset.py --min-images 2000    # 3. 7종만 남겨 합치기, train/val/test 8:1:1 분할
+python check_dataset.py --write-rejects      # 4. 품질 검사 (깨진 사진·잘못된 박스는 rejects.txt 로)
+python review.py --source allernuts          # 5. 모아보기로 자동 라벨 검수 → 틀린 id 를 rejects.txt 에
+python build_dataset.py                      #    (rejects 반영해 다시 빌드)
+python synthesize.py --count 3000 --backgrounds raw/backgrounds   # 6. 섞인 사진 합성 (train)
+python augment.py --min 5000 --max 10000     # 7. train 만 증강 → 클래스당 5,000~10,000장
+python train.py --model yolo11s.pt           # 8. 학습(GPU) → best.pt + best.onnx(휴대폰용)
+python tune.py --weights runs/nuts/weights/best.pt --data val      # 9. 판정 기준값 → best.json
+python promote.py --candidate runs/nuts/weights/best.pt            # 10. 지금 모델보다 나을 때만 앱에 적용
+python evaluate.py --data app --detector yolo:../backend/models/nuts.pt claude   # 실사진 정확도 비교
 ```
 
-학습된 모델로 앱 실행:
-
-```bash
-cd ../backend
-NUT_DETECTOR=yolo NUT_YOLO_WEIGHTS=models/nuts.pt uvicorn app.main:app
-```
+`promote.py` 가 `backend/models/nuts.pt`(+`nuts.json` 기준값, `nuts.onnx` 휴대폰용)를 바꾸면, 서버를 다시 시작하는 것만으로
+앱이 YOLO를 씁니다. API 키도 있으면 자동으로 **하이브리드**(YOLO 우선, 애매하면 Claude)로 동작합니다.
 
 ## 단계별 설명
 
 | 단계 | 하는 일 | 주의 |
 | --- | --- | --- |
 | download | Roboflow(API 키) / zip 링크 / 로컬 폴더 | Kaggle·Mendeley 는 로그인 후 받은 링크 또는 수동 다운로드 후 `local` 로 |
-| autolabel | 분류용 사진(박스 없음)에 Claude 로 박스 생성. 폴더 클래스를 알려 주고 박스만 찾게 함 | 사진 1장 = API 1회 호출. 먼저 `--limit 50` 으로 품질 확인 후 전체 실행, 일부는 사람이 검수 권장 |
-| build_dataset | 7종 외 클래스가 섞인 사진은 통째로 제외, 중복 제거, 해시 기반 고정 분할 | 클래스별 원본 2,000장 미달 시 경고 출력 |
+| autolabel | 분류용 사진(박스 없음)에 Claude 로 박스 생성. 폴더 클래스를 알려 주고 박스만 찾게 함 | 사진 1장 = API 1회 호출. 먼저 `--limit 50` 으로 품질 확인 후 전체 실행 |
+| build_dataset | yolo·coco·voc·classified 형식을 합침. 7종 외 클래스가 섞인 사진은 통째로 제외, 중복 제거, 해시 기반 고정 분할 | 앱의 정확도 측정용 사진(samples/test)은 학습에 못 들어가게 막음 |
+| check_dataset | 깨진 사진, 라벨 없는 사진, 이미지 밖 박스, 너무 작은/큰 박스, 중복 박스 | `--write-rejects` 는 심각한 문제만 자동 제외 |
+| review | 박스 그린 사진을 6×4 격자로 모아 `review/index.html` 로 | 틀린 칸 위의 id 12자리를 `rejects.txt` 에 |
+| synthesize | train 의 낱알을 오려 배경 위에 섞어 붙임 (실제 크기 비율, 가림 40% 이하, 부족한 종류 우선) | 견과류 없는 배경 사진(접시·손·식탁) 폴더를 주면 훨씬 현실적 |
 | augment | 밝기·대비·감마, 90°회전·±30°회전, 반전, 약간의 크기/색조 변화. 부족한 클래스부터 채움 | **train 에만** 적용 (val/test 는 원본만 → 정직한 성능 측정) |
-| train | Ultralytics YOLO11 학습, test 분할 mAP 출력, ONNX 등 내보내기 | GPU 필수 수준. Colab(T4)·로컬 GPU 권장 |
+| train | Ultralytics YOLO11 학습, test 분할 mAP 출력, ONNX 내보내기 | GPU 필수 수준. Colab(T4)·로컬 GPU 권장. 휴대폰 인식은 입력 640 기준 |
+| tune | val 에서 conf·iou 조합을 바꿔 **개수 완전 일치 비율**이 가장 높은 값 선택, 정밀도가 낮은 신뢰도 구간은 '확인 필요'로 | test 로는 튜닝 금지 (스크립트가 막음) |
+| promote | 같은 평가 데이터로 후보·현재 모델 비교 → 개수 정확도(동률이면 mAP50)가 1%p 이상 좋을 때만 교체, `versions/` 보관 | `--list`, `--rollback v2` |
+| evaluate | 여러 인식기를 같은 사진으로 평가해 `backend/data/reports/` 에 저장 → 앱 `/report` 그래프 | `--data app` 이 실제 사용 환경과 가장 가까움 |
+
+## 앱 실사진 테스트셋 · 재학습 데이터
+
+앱의 **`/label` (인식 테스트)** 화면에서 직접 찍은 사진의 인식 결과를 고쳐 저장하면:
+
+- **테스트용** → `backend/data/samples/test/` : `/report` 정확도 그래프와 `evaluate.py --data app`, `promote.py` 판정에 사용. 학습에는 절대 안 들어감.
+- **재학습용** → `backend/data/samples/feedback/` : YOLO 형식이라 `sources.yaml` 에 아래처럼 추가하면 다음 학습에 들어감.
+
+```yaml
+  - name: app_feedback
+    type: local
+    path: ../backend/data/samples/feedback
+    format: yolo
+    class_map: {almond: almond, peanut: peanut, pistachio: pistachio, cashew: cashew, hazelnut: hazelnut, walnut: walnut, raisin: raisin}
+```
+
+정답을 '인식 결과를 고치는' 방식으로 만들기 때문에, 대충 넘기면 인식기에 유리하게 기울 수 있습니다.
+테스트용은 박스 하나하나 꼼꼼히 확인하고, **최소 100장 이상**(종류별 고르게, 섞인 사진 위주) 모으는 것을 권장합니다.
+
+## 테스트
+
+```bash
+cd training && pytest      # 형식 변환, 검사, 검수, 합성, 평가, 튜닝, 버전 관리 (작은 가짜 데이터로)
+```
 
 ### "클래스당 N장"의 기준
 

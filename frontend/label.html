@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#8a5a2b">
+  <title>인식 테스트</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body data-mode="general">
+  <header class="top">
+    <h1>📸 인식 테스트</h1>
+    <a class="chip" href="/">홈</a>
+  </header>
+
+  <main>
+    <p class="hint">
+      견과류 사진을 찍으면 지금 인식기가 찾은 결과가 나와요. 틀린 박스를 고쳐서 <b>정답</b>으로 저장하면
+      정확도 리포트와 재학습에 쓰여요.
+    </p>
+
+    <section class="capture">
+      <label class="big-btn primary">
+        📷 사진 찍기
+        <input id="camera-input" type="file" accept="image/*" capture="environment" hidden>
+      </label>
+      <label class="big-btn">
+        🖼️ 앨범에서 고르기
+        <input id="album-input" type="file" accept="image/*" hidden>
+      </label>
+    </section>
+
+    <section id="status" class="status" hidden></section>
+
+    <section id="editor" hidden>
+      <div class="toolbar">
+        <button id="tool-select" class="chip active" aria-pressed="true">👆 선택·이동</button>
+        <button id="tool-draw" class="chip" aria-pressed="false">✏️ 박스 그리기</button>
+        <button id="delete-btn" class="chip danger" disabled>🗑 삭제</button>
+      </div>
+      <div id="palette" class="palette" aria-label="견과류 종류 선택"></div>
+      <p id="tool-hint" class="hint"></p>
+
+      <div class="photo-wrap"><canvas id="canvas" class="editor-canvas"></canvas></div>
+
+      <div class="card">
+        <strong>이 사진 비교</strong>
+        <table class="compare">
+          <thead><tr><th>종류</th><th>인식 결과</th><th>정답</th></tr></thead>
+          <tbody id="compare-body"></tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <fieldset class="split">
+          <legend>어디에 쓸까요?</legend>
+          <label><input type="radio" name="split" value="test" checked> 정확도 측정용 (테스트)</label>
+          <label><input type="radio" name="split" value="feedback"> 재학습용</label>
+        </fieldset>
+        <label class="consent"><input id="consent" type="checkbox"> 이 사진과 정답을 서버에 저장하는 데 동의합니다.</label>
+        <button id="save-btn" class="big-btn primary" disabled>💾 정답 저장</button>
+      </div>
+    </section>
+
+    <p id="saved-count" class="hint"></p>
+    <nav class="dev-links"><a href="/report">📊 정확도 리포트 보기</a></nav>
+  </main>
+
+  <script src="/static/common.js"></script>
+  <script src="/static/label.js"></script>
+</body>
+</html>

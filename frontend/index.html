@@ -31,6 +31,9 @@
         <input id="album-input" type="file" accept="image/*" hidden>
       </label>
       <p class="hint">견과류를 접시나 손바닥 위에 <b>겹치지 않게</b> 펼쳐 놓고 위에서 찍어 주세요.</p>
+      <label id="ondevice-row" class="toggle-row" hidden>
+        <input id="ondevice" type="checkbox"> 📱 휴대폰에서 바로 인식 (인터넷 없이, 사진이 밖으로 나가지 않아요)
+      </label>
     </section>
 
     <section id="status" class="status" hidden></section>
@@ -57,11 +60,21 @@
       </div>
     </section>
 
+    <nav class="dev-links">
+      <a href="/label">📸 인식 테스트 · 정답 만들기</a>
+      <a href="/report">📊 정확도 리포트</a>
+    </nav>
+
     <p class="disclaimer">
       칼로리와 영양 정보는 평균값으로 추정한 참고용입니다. 질환이 있거나 식이 제한이 있다면 의사·영양사와 상담하세요.
     </p>
   </main>
 
+  <script src="/static/common.js"></script>
+  <script src="/static/ondevice.js"></script>
   <script src="/static/app.js"></script>
+  <script>
+    if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
+  </script>
 </body>
 </html>

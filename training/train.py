@@ -3,19 +3,15 @@
 GPU 에서 실행하세요. (CPU 로는 수만 장 학습에 며칠이 걸립니다.)
 
     python train.py --model yolo11s.pt --epochs 100 --imgsz 640
-    # 학습이 끝나면 앱에서 사용:
-    NUT_DETECTOR=yolo NUT_YOLO_WEIGHTS=../backend/models/nuts.pt uvicorn app.main:app
+    # 끝나면 tune.py → promote.py 순서로 앱에 적용
 """
 
 import argparse
-import shutil
 
 from ultralytics import YOLO
 
 from build_dataset import OUT
 from common import ROOT
-
-MODEL_DIR = ROOT.parent / "backend" / "models"
 
 
 def main() -> None:
@@ -53,11 +49,12 @@ def main() -> None:
     for i, name in best_model.names.items():
         print(f"  {name:<10} mAP50-95={metrics.box.maps[i]:.3f}")
 
-    MODEL_DIR.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(best, MODEL_DIR / "nuts.pt")
     for fmt in args.export:
-        best_model.export(format=fmt, imgsz=args.imgsz)
-    print(f"\n모델 저장: {MODEL_DIR / 'nuts.pt'}")
+        best_model.export(format=fmt, imgsz=args.imgsz)  # runs/nuts/weights/best.onnx 등
+    print(f"""
+다음 단계:
+  python tune.py --weights {best} --data val      # 판정 기준값 고르기 → best.json
+  python promote.py --candidate {best}            # 지금 모델보다 나을 때만 앱에 적용""")
 
 
 if __name__ == "__main__":

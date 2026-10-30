@@ -9,3 +9,5 @@ training/datasets/
 training/runs/
 training/sources.yaml
 backend/models/
+backend/data/
+training/review/
