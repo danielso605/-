@@ -144,8 +144,32 @@ def load_thresholds(weights: str | Path) -> dict:
     return {**DEFAULT_THRESHOLDS, **json.loads(path.read_text())} if path.exists() else dict(DEFAULT_THRESHOLDS)
 
 
+_EXTRA_ALIASES = {"peanuts": "peanut", "groundnut": "peanut", "pistachios": "pistachio", "cashewnut": "cashew",
+                  "cashews": "cashew", "hazelnuts": "hazelnut", "filbert": "hazelnut", "walnuts": "walnut",
+                  "almonds": "almond", "raisins": "raisin", "driedgrape": "raisin", "캐슈": "cashew", "헤이즐럿": "hazelnut"}
+
+
+def _norm(name: str) -> str:
+    return "".join(ch for ch in str(name).lower() if ch.isalnum())
+
+
+def resolve_class(name: str) -> str:
+    """모델 클래스 이름 → 앱 id. 'Almond', 'almonds', '아몬드', 'walnut_kernel' 처럼 달라도 맞춰 준다."""
+    key = _norm(name)
+    table = {}
+    for nut_id, nut in load_nuts().items():
+        for alias in (nut_id, nut["name_en"], nut["name_ko"]):
+            table[_norm(alias)] = nut_id
+    table.update({_norm(k): v for k, v in _EXTRA_ALIASES.items()})
+    if key in table:
+        return table[key]
+    # 'walnut_kernel', 'roasted almond' 처럼 이름 일부에 들어 있는 경우
+    hits = {v for k, v in table.items() if len(k) >= 4 and k in key}
+    return hits.pop() if len(hits) == 1 else UNKNOWN
+
+
 class YoloDetector:
-    """직접 학습한 YOLO 모델(ultralytics). 클래스 이름은 nuts.json 의 id 와 같아야 한다.
+    """직접 학습한 YOLO 모델(ultralytics). 클래스 이름은 resolve_class 로 앱 id 에 맞춘다.
 
     YOLO 자체 NMS 는 거의 끄고(raw) 앱 공통 후처리(metrics.postprocess)로 걸러서,
     tune.py 가 고른 기준값과 실제 앱 동작이 정확히 같게 한다.
@@ -158,6 +182,8 @@ class YoloDetector:
 
         self.model = YOLO(str(weights))
         self.thresholds = thresholds or load_thresholds(weights)
+        # 모델 클래스 번호 → 앱 id (휴대폰용 ONNX 도 같은 순서를 쓴다)
+        self.class_ids = [resolve_class(self.model.names[i]) for i in sorted(self.model.names)]
 
     def raw(self, image: bytes) -> list[dict]:
         import io
@@ -166,10 +192,9 @@ class YoloDetector:
 
         img = Image.open(io.BytesIO(image)).convert("RGB")
         result = self.model.predict(img, conf=0.01, iou=0.95, max_det=600, verbose=False)[0]
-        known = load_nuts()
         return [
             {
-                "nut_id": result.names[int(cls)] if result.names[int(cls)] in known else UNKNOWN,
+                "nut_id": self.class_ids[int(cls)],
                 "box": [round(v * 1000) for v in box],
                 "confidence": round(float(conf), 3),
             }

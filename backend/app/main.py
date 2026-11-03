@@ -44,6 +44,13 @@ def list_nuts() -> dict:
     return {"daily_recommended_g": DAILY_RECOMMENDED_G, "nuts": list(load_nuts().values())}
 
 
+def model_classes() -> list[str] | None:
+    for d in (detector, getattr(detector, "primary", None)):
+        if d is not None and hasattr(d, "class_ids"):
+            return d.class_ids
+    return None
+
+
 @app.get("/api/config")
 def config() -> dict:
     """휴대폰 내 인식(ONNX)용 모델이 배포돼 있는지 알려 준다."""
@@ -52,7 +59,8 @@ def config() -> dict:
     return {
         "detector": detector.name,
         "ondevice_model": "/models/nuts.onnx" if onnx.exists() else None,
-        "classes": list(load_nuts()),
+        # 휴대폰용 ONNX 출력 순서 = 학습한 모델의 클래스 순서
+        "classes": model_classes() or list(load_nuts()),
         "thresholds": json.loads(thresholds.read_text()) if thresholds.exists() else None,
     }
 

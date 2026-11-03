@@ -3,6 +3,14 @@
 사진 한 장으로 **여러 종류가 섞인 견과류를 하나하나 인식**하고, 종류별 개수·칼로리·효능·주의사항을 알려주는 앱입니다.
 어르신을 주 대상으로 하지만 운동하는 사람과 일반 사용자도 쉽게 쓸 수 있도록 **사용자 유형별 모드**를 제공합니다.
 
+## 🚀 처음이라면
+
+**설치 없이 내 모델로 휴대폰 테스트 → 앱으로 만들기:** [docs/TESTING_GUIDE.md](docs/TESTING_GUIDE.md)
+
+1. Colab 에서 [`colab/app_test.ipynb`](colab/app_test.ipynb) 열기 → `best.pt` 올리기 → QR 코드로 휴대폰 접속
+2. Hugging Face Spaces 에 올려 고정 주소 + 홈 화면 앱 아이콘 ([`deploy/huggingface/`](deploy/huggingface/))
+3. PWABuilder 로 Play 스토어 / App Store 앱
+
 ## 주요 기능
 
 | 기능 | 설명 |

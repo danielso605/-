@@ -42,3 +42,14 @@ def test_yolo_postprocess_uses_thresholds():
     ]
     out = det.detect(b"", "image/jpeg")
     assert [(d["confidence"], d["needs_review"]) for d in out] == [(0.9, False), (0.45, True)]
+
+
+def test_resolve_class_accepts_common_variants():
+    from app.detector import UNKNOWN, resolve_class
+
+    assert resolve_class("Almond") == "almond"
+    assert resolve_class("아몬드") == "almond"
+    assert resolve_class("Pistachios") == "pistachio"
+    assert resolve_class("walnut_kernel") == "walnut"
+    assert resolve_class("Brazil nut") == UNKNOWN
+    assert resolve_class("건포도") == "raisin"
