@@ -1,0 +1,7 @@
+fastapi>=0.115
+uvicorn[standard]>=0.30
+python-multipart>=0.0.9
+anthropic>=2.3.0
+# 선택: 직접 학습한 YOLO 모델을 쓸 때만 필요
+# ultralytics>=8.3
+# pillow>=10

@@ -1,0 +1,61 @@
+# 학습 데이터 출처 목록. sources.yaml 로 복사한 뒤 실제 값으로 채워 사용한다.
+#
+# type:
+#   roboflow   - Roboflow Universe 데이터셋을 YOLO 형식으로 자동 다운로드 (ROBOFLOW_API_KEY 필요)
+#   url        - zip 파일 직접 다운로드 (Mendeley, Kaggle 등에서 받은 다운로드 링크)
+#   local      - 이미 받아 둔 폴더
+#
+# format:
+#   yolo       - images/ + labels/ (박스 라벨 있음). class_map 으로 원본 클래스명 → 우리 id 매핑
+#   classified - 클래스별 하위 폴더에 사진만 있음 (박스 없음) → autolabel.py 가 Claude 로 박스를 만든다
+#                folder_map 으로 하위 폴더명 → 우리 id 매핑
+#
+# class_map / folder_map 에 없는 클래스는 학습에서 제외된다.
+# 대상 클래스: almond, peanut, pistachio, cashew, hazelnut, walnut, raisin
+
+sources:
+  # 박스 라벨이 있는 유일한 공개 후보 (호두·아몬드·캐슈넛). 버전 번호와 클래스명은 페이지에서 확인 후 수정.
+  - name: roboflow_walnut_almond_cashew
+    type: roboflow
+    workspace: baraka-qofeh
+    project: barakat_model_objec2t_detection-697np
+    version: 1
+    format: yolo
+    class_map:
+      almond: almond
+      cashew: cashew
+      walnut: walnut
+
+  # AllerNuts (Mendeley): 아몬드·캐슈넛·땅콩·피스타치오 분류용 사진 4,390장
+  # https://data.mendeley.com/datasets/3gtbxvgm5f 에서 "Download All" 링크를 복사해 넣는다.
+  - name: allernuts
+    type: url
+    url: "<Mendeley 다운로드 링크>"
+    format: classified
+    folder_map:
+      Almond: almond
+      Cashew: cashew
+      Peanut: peanut
+      Pistachio: pistachio
+
+  # Dry Fruit Image Dataset (Mendeley): 아몬드·캐슈넛·건포도 (무화과는 제외)
+  # https://data.mendeley.com/datasets/yfhgn8py5f/1
+  - name: dry_fruit
+    type: url
+    url: "<Mendeley 다운로드 링크>"
+    format: classified
+    folder_map:
+      Almond: almond
+      Cashew: cashew
+      Raisin: raisin
+
+  # 직접 촬영한 사진 (헤이즐넛·호두 등 부족한 클래스 보충용). 섞인 사진이면 classified 대신
+  # mixed 폴더에 넣고 folder_map 값을 "mixed" 로 두면 Claude 가 7종 전체에서 골라 라벨링한다.
+  - name: my_photos
+    type: local
+    path: ./raw/my_photos
+    format: classified
+    folder_map:
+      hazelnut: hazelnut
+      walnut: walnut
+      mixed: mixed

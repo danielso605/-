@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>정확도 리포트</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/report.css">
+</head>
+<body data-mode="general">
+  <header class="top">
+    <h1>📊 정확도 리포트</h1>
+    <a class="chip" href="/label">테스트하러 가기</a>
+  </header>
+
+  <main class="viz-root report">
+    <div class="filters">
+      <label for="source">결과 선택</label>
+      <select id="source"></select>
+    </div>
+
+    <p id="empty" class="status" hidden></p>
+
+    <section id="content" hidden>
+      <p id="source-desc" class="hint"></p>
+      <div id="tiles" class="tiles"></div>
+
+      <article class="chart-card">
+        <h2>종류별 정밀도 · 재현율</h2>
+        <p class="hint">정밀도 = 인식한 것 중 맞은 비율 · 재현율 = 실제 있는 것 중 찾아낸 비율</p>
+        <div id="legend-pr" class="legend"></div>
+        <div id="chart-pr" class="chart"></div>
+      </article>
+
+      <article class="chart-card">
+        <h2>종류별 개수 오차</h2>
+        <p class="hint">사진 한 장에서 실제 개수와 평균 몇 개 차이 나는지 (0에 가까울수록 좋음)</p>
+        <div id="chart-count" class="chart"></div>
+      </article>
+
+      <article class="chart-card">
+        <h2>무엇과 헷갈렸나 (혼동 행렬)</h2>
+        <p class="hint">행 = 실제 정답, 열 = 인식 결과. 각 행에서 몇 %로 인식했는지. 대각선이 진할수록 좋음.</p>
+        <div id="chart-confusion" class="chart heat-wrap"></div>
+      </article>
+
+      <article id="history-card" class="chart-card" hidden>
+        <h2>모델 버전별 성능 변화</h2>
+        <p class="hint">테스트셋 mAP50 (박스 위치+종류 정확도)</p>
+        <div id="chart-history" class="chart"></div>
+      </article>
+
+      <details class="chart-card">
+        <summary>표로 보기</summary>
+        <div id="table" class="table-wrap"></div>
+      </details>
+    </section>
+  </main>
+
+  <div id="tooltip" class="tooltip" role="status" hidden></div>
+  <script src="/static/report.js"></script>
+</body>
+</html>
